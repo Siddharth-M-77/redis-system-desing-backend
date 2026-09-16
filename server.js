@@ -15,11 +15,11 @@ dotenv.config();
 console.log(process.env.MONGO_URI);
 const app = express();
 app.use("/uploads", express.static(join(__dirname, "uploads")));
-
 const allowedOrigins = ["https://risenest.cloud", "https://www.risenest.cloud"];
 app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 app.use(morgan("dev"));
+app.set("trust proxy", 1);
 app.use(
   expressSession({
     secret: process.env.SESSION_SECRET || "your-secret-key",

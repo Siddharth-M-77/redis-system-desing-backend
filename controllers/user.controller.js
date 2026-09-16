@@ -225,7 +225,6 @@ const referralLevelConfig = [
 export const investment = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
-
   try {
     const userId = req.user?._id;
     const amount = Number(req.body.investmentAmount);
@@ -237,10 +236,6 @@ export const investment = async (req, res) => {
     const selectedPackage = getPackage(amount);
     if (!selectedPackage)
       throw new Error("No package found for this investment amount");
-
-    console.log(
-      `📦 Package Selected → ${selectedPackage.name} | ROI: ${selectedPackage.roiPercent}%`,
-    );
 
     const user = await UserModel.findById(userId).session(session);
     if (!user) throw new Error("User not found");
@@ -282,7 +277,6 @@ export const investment = async (req, res) => {
       `\n🎉 Investment Successful → userId: ${userId} | amount: $${amount}\n`,
     );
 
-    // ⚡ Buyer ka apna cache turant clear (fast, chhota operation, yahi rehne diya)
     try {
       await redisClient.del(`risenest:cache:${userId.toString()}`);
       console.log(`🗑️ [Redis] Buyer cache cleared: ${userId}`);
@@ -896,234 +890,6 @@ export const getTeamBusiness = async (req, res) => {
     });
   }
 };
-
-// const getLevelPercent = (level) => {
-//   const map = { 1: 10, 2: 5, 3: 3, 4: 1, 5: 1 };
-//   return map[level] || 0;
-// };
-
-// // ===============================
-// // LEVEL INCOME (claim ke time, on the spot)
-// // Har upline ka alag LevelIncome record banta hai (= level income history)
-// // ===============================
-// const buildLevelIncomeOps = async (
-//   fromUser,
-//   roiAmount,
-//   creditedAt,
-//   session,
-// ) => {
-//   const records = [];
-//   const userUpdates = [];
-//   let totalDistributed = 0;
-
-//   if (!fromUser?.sponserId) {
-//     console.log(`     ⛔ No sponserId — level income skipped`);
-//     return { records, userUpdates, totalDistributed };
-//   }
-
-//   let sponsorId = fromUser.sponserId;
-//   let level = 1;
-
-//   while (sponsorId && level <= 5) {
-//     const sponsor = await UserModel.findById(sponsorId)
-//       .select("username sponserId isVerified")
-//       .session(session)
-//       .lean();
-
-//     if (!sponsor) {
-//       console.log(`     ⛔ Level ${level} → sponsor not found — chain break`);
-//       break;
-//     }
-
-//     if (sponsor.isVerified) {
-//       const percent = getLevelPercent(level);
-//       const income = Number(((roiAmount * percent) / 100).toFixed(2));
-
-//       if (income > 0) {
-//         console.log(
-//           `     ✅ Level ${level} → ${sponsor.username} | +$${income} (${percent}%)`,
-//         );
-
-//         records.push({
-//           insertOne: {
-//             document: {
-//               userId: sponsor._id,
-//               fromUserId: fromUser._id,
-//               fromUserName: fromUser.username,
-//               toUserName: sponsor.username,
-//               level,
-//               percent,
-//               roi: roiAmount,
-//               amount: income,
-//               creditedAt,
-//               claimed: true,
-//               claimedAt: creditedAt,
-//             },
-//           },
-//         });
-
-//         userUpdates.push({
-//           updateOne: {
-//             filter: { _id: sponsor._id },
-//             update: {
-//               $inc: {
-//                 levelIncome: income,
-//                 mainWallet: income,
-//                 totalEarnings: income,
-//                 currentEarnings: income,
-//               },
-//             },
-//           },
-//         });
-
-//         totalDistributed += income;
-//       }
-//     } else {
-//       console.log(
-//         `     ⚠️  Level ${level} → ${sponsor.username} | not eligible`,
-//       );
-//     }
-
-//     sponsorId = sponsor.sponserId;
-//     level++;
-//   }
-
-//   return {
-//     records,
-//     userUpdates,
-//     totalDistributed: Number(totalDistributed.toFixed(2)),
-//   };
-// };
-
-// export const claimEarnings = async (req, res) => {
-//   const userId = req.user?._id;
-//   const session = await mongoose.startSession();
-//   try {
-//     session.startTransaction();
-//     const now = new Date();
-
-//     const user = await UserModel.findById(userId)
-//       .select("username sponserId")
-//       .session(session)
-//       .lean();
-
-//     if (!user) {
-//       await session.abortTransaction();
-//       return res
-//         .status(404)
-//         .json({ success: false, message: "User not found" });
-//     }
-
-//     const roiAgg = await Aroi.aggregate([
-//       {
-//         $match: {
-//           userId: new mongoose.Types.ObjectId(userId),
-//           claimed: { $ne: true },
-//         },
-//       },
-//       { $group: { _id: null, total: { $sum: "$roiAmount" } } },
-//     ]).session(session);
-
-//     const roiTotal = Number((roiAgg[0]?.total || 0).toFixed(2));
-
-//     if (roiTotal <= 0) {
-//       await session.abortTransaction();
-//       return res.status(400).json({
-//         success: false,
-//         message: "Claim karne ke liye koi pending ROI nahi hai",
-//       });
-//     }
-
-//     await Aroi.updateMany(
-//       { userId, claimed: { $ne: true } },
-//       { $set: { claimed: true, claimedAt: now } },
-//       { session },
-//     );
-
-//     await UserModel.updateOne(
-//       { _id: userId },
-//       {
-//         $inc: {
-//           mainWallet: roiTotal,
-//           totalEarnings: roiTotal,
-//           currentEarnings: roiTotal,
-//         },
-//         $set: { pendingRoi: 0 },
-//       },
-//       { session },
-//     );
-//     console.log(`  💸 ROI claimed → ${user.username} | +$${roiTotal} wallet`);
-
-//     // Level income upline ko
-//     const { records, userUpdates, totalDistributed } =
-//       await buildLevelIncomeOps(user, roiTotal, now, session);
-
-//     if (records.length) await LevelIncome.bulkWrite(records, { session });
-//     if (userUpdates.length) await UserModel.bulkWrite(userUpdates, { session });
-
-//     // 💽 DATABASE TRANSACTION COMMIT (Sab kuch safely DB me likha gaya)
-//     await session.commitTransaction();
-//     console.log(
-//       `  ✅ Claim done → ROI $${roiTotal} | LevelIncome $${totalDistributed}`,
-//     );
-
-//     // =======================================================
-//     // ⚡ NEW HASH BUCKET PARALLEL INVALIDATION (COMMIT KE BAAD)
-//     // =======================================================
-//     try {
-//       const deletePromises = [];
-//       const usersToInvalidate = new Set();
-
-//       // 1. Sabse pehle claim karne wale user ki ID add karo
-//       usersToInvalidate.add(userId.toString());
-
-//       // 2. Jo-jo uplines bulkWrite (userUpdates) me update hue hain, unki IDs nikaal kar Set me daalo
-//       if (userUpdates && userUpdates.length > 0) {
-//         userUpdates.forEach((op) => {
-//           const uplineId =
-//             op.updateOne?.filter?._id || op.updateOne?.filter?._id?.$in;
-//           if (uplineId) {
-//             usersToInvalidate.add(uplineId.toString());
-//           }
-//         });
-//       }
-
-//       // 3. Sabhi affected users ka poora bucket parallelly delete karo
-//       for (const uId of usersToInvalidate) {
-//         deletePromises.push(redisClient.del(`risenest:cache:${uId}`));
-//       }
-
-//       await Promise.all(deletePromises);
-//       console.log(
-//         `🗑️ [Redis Bucket Evicted] Cleared cache for ${deletePromises.length} users after claim.`,
-//       );
-//     } catch (cacheError) {
-//       // Redis fail hone par bhi claim process successfully response jana chahiye
-//       console.error(
-//         "⚠️ Redis Cache Clearing Failed in Claim Earnings:",
-//         cacheError.message,
-//       );
-//     }
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "ROI claimed & level income distributed",
-//       data: {
-//         roiClaimed: roiTotal,
-//         levelIncomeDistributed: totalDistributed,
-//         levelsPaid: records.length,
-//       },
-//     });
-//   } catch (err) {
-//     await session.abortTransaction();
-//     console.error(`❌ Claim Failed → ${userId} | ${err.message}`);
-//     return res
-//       .status(500)
-//       .json({ success: false, message: "Claim process me error" });
-//   } finally {
-//     session.endSession();
-//   }
-// };
 
 const getLevelPercent = (level) => {
   const map = { 1: 10, 2: 5, 3: 3, 4: 1, 5: 1 };
